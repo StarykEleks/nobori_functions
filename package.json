@@ -1,0 +1,19 @@
+{
+  "name": "nobori-functions",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:web": "npm run -w apps/web dev",
+    "dev:api": "npm run -w apps/api start:dev",
+    "format": "prettier -w .",
+    "secrets:fetch": "sh -c 'mkdir -p assets/env/${0}/nobori-apis/ && gsutil cp -r gs://nobori-${0}_secrets/* assets/env/${0}'",
+    "secrets:sync:functions": "sh -c 'gsutil cp -r assets/env/${0}/functions/** gs://nobori-${0}_secrets/functions/'"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3"
+  }
+}

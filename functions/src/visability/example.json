@@ -1,0 +1,40 @@
+{
+  "sentiment": "neutral",
+  "cited": [
+    {
+      "url": "https://amazon.com/kindleunlimited",
+      "domain": "amazon.com",
+      "brandName": "Amazon",
+      "isMentioned": true,
+      "type": "Competitor"
+    },
+    {
+      "url": "https://kobo.com/plus",
+      "domain": "kobo.com",
+      "brandName": "Kobo",
+      "isMentioned": false,
+      "type": "Competitor"
+    },
+    {
+      "url": "https://everand.com",
+      "domain": "everand.com",
+      "brandName": "Everand",
+      "isMentioned": false,
+      "type": "Competitor"
+    },
+    {
+      "url": "https://perlego.com",
+      "domain": "perlego.com",
+      "brandName": "Perlego",
+      "isMentioned": false,
+      "type": "Competitor"
+    },
+    {
+      "url": "https://overdrive.com",
+      "domain": "overdrive.com",
+      "brandName": "Libby",
+      "isMentioned": false,
+      "type": "Third Party"
+    }
+  ]
+}
