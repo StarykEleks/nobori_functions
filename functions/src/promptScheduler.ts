@@ -1,4 +1,4 @@
-import { JobsPublisher } from "./jobs.publisher";
+import { JobsPublisher } from "./utils/jobs.publisher";
 import { getAllActivePromptsRaw } from "./database/getActivePrompts";
 
 export async function promptScheduler(req: any, res: any) {

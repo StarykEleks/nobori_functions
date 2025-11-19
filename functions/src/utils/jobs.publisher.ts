@@ -1,5 +1,5 @@
 import { PubSub } from "@google-cloud/pubsub";
-import { getCredentialsKeyFilename, getProjectId } from "./utils/env";
+import { getCredentialsKeyFilename, getProjectId } from "./env";
 import fs from "fs";
 import { GoogleAuth } from "google-auth-library";
 
@@ -8,11 +8,11 @@ type JobPayload = { type: string; data: unknown };
 export class JobsPublisher {
   private pubsub?: PubSub;
 
-  private get topicName() {
-    return `projects/${getProjectId()}/topics/${process.env.PUBSUB_TOPIC || "jobs-topic"}`;
+  private topicName(topicName: string = process.env.PUBSUB_TOPIC || "jobs-topic") {
+    return `projects/${getProjectId()}/topics/${topicName}`;
   }
 
-  async publishJob<T = unknown>(type: string, data: T) {
+  async publishJob<T = unknown>(type: string, data: T, topicName?: string) {
     const credentialsPath = getCredentialsKeyFilename();
     if (!fs.existsSync(credentialsPath)) {
       throw new Error(`Service account file not found: ${credentialsPath}`);
@@ -30,7 +30,7 @@ export class JobsPublisher {
     });
 
     const msg: JobPayload = { type, data };
-    const topic = this.pubsub.topic(this.topicName);
+    const topic = this.pubsub.topic(this.topicName(topicName));
     console.log("topic", topic);
     console.log("message", JSON.stringify(msg));
     await topic.publishMessage({

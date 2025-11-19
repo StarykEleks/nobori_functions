@@ -6,14 +6,23 @@ import { UsageTracker } from "../database/usage-tracker";
 import { getMonthlyRunsLimit } from "../database/limits";
 import { SavePromptResultDto } from "./save-prompt-result.dto";
 import { upsertCompetitor } from "../database/competitors";
+import { VisabilityCheckPubSubMessage } from "../visabilityCheck";
+import { gptBrowser } from "../apis/api";
 
-type PromptInput = { text: string; id: string };
-type BrandInput = { id: string; name: string; url: string; userId: string };
+export type PromptInput = { text: string; id: string };
+export type BrandInput = {
+  id: string;
+  name: string;
+  url: string;
+  userId: string;
+};
 
 const getSystemContent = (
   brandName: string,
 ) => `You are “BrandVisibilityScorer,” a strict analyst.
-ONLY use the provided result from web search. Do not fetch or assume anything. The main brand name: ${brandName}
+This is response from prompt run, I need to found all cited pages, cited domains, find urls and check if main brand was mentioned. 
+The main brand name: ${brandName}
+
 Respond ONLY in JSON format
 Example of JSON output:
 {
@@ -51,21 +60,85 @@ export class VisibilityService {
     this.pgPool.connect().catch((e) => console.error("PG connect error:", e));
   }
 
-  async GPT(userId: string, brand: BrandInput, prompts: PromptInput[]) {
-    const runAt = new Date();
-    const runDate = runAt.toISOString().slice(0, 10);
-
-    const monthlyLimit = await getMonthlyRunsLimit(this.pgPool, userId);
-    console.log("monthlyLimit for user", userId, "is", monthlyLimit);
-    // Optional pre-sizing (avoid starting more than remaining)
-    // You can remove this if you prefer per-item check only.
-    const usedMap = await this.usage.getCurrent(userId, "runs", "month");
-    const used = usedMap["runs"] ?? 0;
-    const remaining = Math.max(0, monthlyLimit - used);
-    const toProcess = Math.min(prompts.length, remaining || prompts.length); // if unlimited (0), we still process
+  async visabilityProvider(messageData: VisabilityCheckPubSubMessage) {
+    const { providers } = messageData.data;
 
     let processed = 0;
 
+    const runs: any[] = [];
+    for (const provider of providers.slice(0)) {
+      switch (provider) {
+        case "GPT": {
+          runs.push(this.limitGuard(messageData.data, this.GPT, "openai-gpt"));
+          break;
+        }
+        case "GoogleOverview":
+        case "PerplexityAI":
+        case "BingAI":
+        default:
+          console.log(`Provider ${provider} not implemented yet.`);
+      }
+    }
+
+    const results = await Promise.all(runs);
+    console.log("Finished with:", results.length);
+  }
+
+  private async visabilityProcessing(
+    responseText: string,
+    prompt: PromptInput,
+    brand: BrandInput,
+    provider: string,
+  ) {
+    const runAt = new Date();
+    const runDate = runAt.toISOString().slice(0, 10);
+    const out = await callOpenAIJson(
+      [
+        { role: "system", content: getSystemContent(brand.name) },
+        { role: "user", content: responseText },
+      ],
+      "gpt-5",
+    );
+
+    await updatePromptLastRun(prompt.id, "completed");
+
+    await this.savePromptRun({
+      promptId: prompt.id,
+      brandId: brand.id,
+      promptText: prompt.text,
+      runDate,
+      provider,
+      responseText,
+      ...out,
+    });
+  }
+
+  async GPT(prompt: PromptInput) {
+    try {
+      const result = await gptBrowser(prompt.text);
+      // @ts-ignore
+      return result?.answer_html;
+    } catch (e) {
+      return this.apiGPT(prompt);
+    }
+  }
+
+  private async limitGuard(
+    data: {
+      userId: string;
+      brand: BrandInput;
+      prompts: PromptInput[];
+    },
+    runFunction: Function,
+    provider: string,
+  ) {
+    const { prompts, userId } = data;
+    const monthlyLimit = await getMonthlyRunsLimit(this.pgPool, userId);
+    console.log("monthlyLimit for user", userId, "is", monthlyLimit);
+    const usedMap = await this.usage.getCurrent(userId, "runs", "month");
+    const used = usedMap["runs"] ?? 0;
+    const remaining = Math.max(0, monthlyLimit - used);
+    const toProcess = Math.min(prompts.length, remaining || prompts.length);
     for (const p of prompts.slice(0, toProcess)) {
       try {
         // Authoritative quota enforcement BEFORE running the model
@@ -79,34 +152,10 @@ export class VisibilityService {
 
         await updatePromptLastRun(p.id, "running");
 
-        const search = await callOpenAIWebSearch(
-          [{ role: "user", content: p.text }],
-          "gpt-5",
-        );
+        const runResult = await runFunction(p);
         const responseText =
-          typeof search === "string" ? search : JSON.stringify(search);
-        const out = await callOpenAIJson(
-          [
-            { role: "system", content: getSystemContent(brand.name) },
-            { role: "user", content: responseText },
-          ],
-          "gpt-5",
-        );
-
-        await updatePromptLastRun(p.id, "completed");
-
-        await this.savePromptRun({
-          promptId: p.id,
-          brandId: brand.id,
-          promptText: p.text,
-          runDate,
-          provider: "openai-gpt",
-          responseText,
-          ...out,
-        });
-
-        processed++;
-        console.log("Finished processed result:", processed);
+          typeof runResult === "string" ? runResult : JSON.stringify(runResult);
+        await this.visabilityProcessing(responseText, p, data.brand, provider);
       } catch (err: any) {
         console.error("RUN failed for prompt", p.id, err);
         await updatePromptLastRun(p.id, "failed");
@@ -120,14 +169,21 @@ export class VisibilityService {
         }
         console.error("Prompt run error:", err);
       }
-    }
 
-    return {
-      ok: true,
-      processed,
-      requested: prompts.length,
-      limit: monthlyLimit,
-    };
+      return {
+        ok: true,
+        requested: prompts.length,
+        limit: monthlyLimit,
+      };
+    }
+  }
+
+  async apiGPT(prompt: PromptInput) {
+    const runResult = await callOpenAIWebSearch(
+      [{ role: "user", content: prompt.text }],
+      "gpt-5",
+    );
+    return runResult;
   }
 
   async savePromptRun(
